@@ -1,21 +1,27 @@
 """
 Symulacja termodynamiczna silnika tłokowego z modelem spalania Wiebescha
-========================================================================
+oraz analizą kinetyki chemicznej spalania w Cantera
+=========================================================================
 Przedmiot: Metody Komputerowe w Spalaniu
 Autor: [Twoje imię i nazwisko]
 
 Model obejmuje:
+  - Analizę kinetyki chemicznej spalania CH4/powietrze (Cantera, mech. GRI-3.0):
+      * adiabatyczna temperatura spalania T_ad (równowaga HP)
+      * równowagowy skład spalin
+      * prędkość spalania laminarnego S_L (model płomienia 1D, FreeFlame)
   - Geometrię układu korbowo-tłokowego
   - Sprężanie i rozprężanie (gaz doskonały, γ = const)
-  - Spalanie opisane funkcją Wiebescha
+  - Spalanie w cylindrze opisane funkcją Wiebescha
   - Bilans energii (I zasada termodynamiki)
-  - Wykresy: p-V, p(φ), T(φ), x(φ)
-  - Wskaźniki: p_max, T_max, IMEP, η_th
+  - Wykresy: p-V, p(φ), T(φ), x(φ), T_ad(λ), S_L(λ)
+  - Wskaźniki: p_max, T_max, T_ad, S_L, IMEP, η_th
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import cantera as ct
 
 # ─────────────────────────────────────────────────────────────
 # 1. PARAMETRY SILNIKA
@@ -57,11 +63,83 @@ Cv     = R_air / (gamma - 1)
 Cp     = gamma * Cv
 
 if TYP_SILNIKA == 'ZI':
-    Hu   = 44.0e6   # [J/kg]  wartość opałowa benzyny
-    L_st = 14.7     # [-]     stechiometryczne zapotrzebowanie na powietrze
+    Hu   = 50.0e6   # [J/kg]  wartość opałowa CH4 (zgodna z analizą Cantera, sekcja 3a)
+    L_st = 17.2     # [-]     stechiometryczne zapotrzebowanie powietrza dla CH4 (masowe)
 else:
-    Hu   = 42.5e6   # [J/kg]  wartość opałowa oleju napędowego
+    Hu   = 42.5e6   # [J/kg]  wartość opałowa oleju napędowego (model ZS — tabelaryczny)
     L_st = 14.5
+
+# ─────────────────────────────────────────────────────────────
+# 3a. KINETYKA CHEMICZNA SPALANIA — CANTERA (mechanizm GRI-3.0)
+# ─────────────────────────────────────────────────────────────
+#
+# Paliwo modelowe: CH4 (metan) — substytut paliwa rzeczywistego,
+# ponieważ mechanizm GRI-3.0 nie zawiera węglowodorów ciężkich
+# (typu n-oktan/dodekan stosowanych jako surogaty benzyny/oleju
+# napędowego). Metan jest standardowym paliwem referencyjnym
+# do analizy kinetyki spalania w Cantera.
+#
+# Liczone wielkości:
+#   - T_ad   : adiabatyczna temperatura spalania (równowaga H=const, p=const)
+#   - skład spalin w równowadze chemicznej
+#   - S_L    : prędkość spalania laminarnego (model płomienia 1D, FreeFlame)
+#
+# Wyniki wykorzystywane są jako fizyczna walidacja modelu Wiebescha
+# (sekcja 6) — temperatura T_ad wyznacza górną granicę temperatury
+# osiąganej w cylindrze.
+
+PALIWO_MECH = 'gri30.yaml'   # mechanizm reakcji chemicznych (53 gatunki, 325 reakcji)
+PALIWO_NAZWA = 'CH4'         # paliwo modelowe (metan)
+OKSYDATOR = 'O2:1, N2:3.76'  # powietrze (uproszczone, bez Ar)
+
+
+def analiza_spalania_cantera(lam, T1, p1, mech=PALIWO_MECH, paliwo=PALIWO_NAZWA):
+    """
+    Analiza spalania w Cantera: temperatura adiabatyczna, skład
+    spalin w równowadze oraz prędkość spalania laminarnego.
+
+    Parametry
+    ---------
+    lam : współczynnik nadmiaru powietrza [-]  (λ = 1/φ_eq)
+    T1  : temperatura mieszanki przed spalaniem [K]
+    p1  : ciśnienie mieszanki przed spalaniem [Pa]
+
+    Zwraca
+    ------
+    słownik: T_ad [K], skład_spalin (dict mol. udziałów > 0.1%), S_L [m/s]
+    """
+    phi_eq = 1.0 / lam   # współczynnik ekwiwalencji (Cantera convention)
+
+    # ── Adiabatyczna temperatura spalania i równowaga chemiczna ──
+    gas = ct.Solution(mech)
+    gas.set_equivalence_ratio(phi_eq, paliwo, OKSYDATOR)
+    gas.TP = T1, p1
+    gas.equilibrate('HP')   # stałe H i p -> adiabatyczne spalanie izobaryczne
+
+    T_ad = gas.T
+    sklad_spalin = {
+        sp: gas[sp].X[0]
+        for sp in gas.species_names
+        if gas[sp].X[0] > 1e-3
+    }
+
+    # ── Prędkość spalania laminarnego (model płomienia 1D) ──
+    gas_flame = ct.Solution(mech)
+    gas_flame.set_equivalence_ratio(phi_eq, paliwo, OKSYDATOR)
+    gas_flame.TP = T1, p1
+    flame = ct.FreeFlame(gas_flame, width=0.03)
+    flame.set_refine_criteria(ratio=3, slope=0.06, curve=0.12)
+    try:
+        flame.solve(loglevel=0, auto=True)
+        S_L = flame.velocity[0]   # [m/s]
+    except ct.CanteraError:
+        S_L = np.nan   # poza zakresem zapłonu (np. bardzo bogata/biedna mieszanka)
+
+    return {'T_ad': T_ad, 'sklad_spalin': sklad_spalin, 'S_L': S_L}
+
+
+# Analiza spalania dla aktualnego λ (parametr z sekcji 1)
+wynik_cantera = analiza_spalania_cantera(lam=lam, T1=T1, p1=p1)
 
 # ─────────────────────────────────────────────────────────────
 # 4. GEOMETRIA UKŁADU KORBOWO-TŁOKOWEGO
@@ -247,6 +325,13 @@ print(f"  Kąt początku spalania φ₀  : {phi0:.1f} °OWK")
 print(f"  Czas spalania Δφ          : {delta_phi:.1f} °OWK")
 print(f"  Sprawność wskazana η_i    : {eta_i*100:.0f} %")
 print("-" * 55)
+print(f"  --- Kinetyka chemiczna (Cantera, {PALIWO_NAZWA}/powietrze) ---")
+print(f"  Adiabatyczna temp. spalania T_ad : {wynik_cantera['T_ad']:.1f} K")
+print(f"  Prędkość spalania laminarnego S_L : {wynik_cantera['S_L']*100:.2f} cm/s")
+print("  Skład spalin (równowaga, udział molowy > 0.1%):")
+for sp, frac in sorted(wynik_cantera['sklad_spalin'].items(), key=lambda kv: -kv[1]):
+    print(f"    {sp:>5} : {frac:.4f}")
+print("-" * 55)
 print(f"  Ciepło doprowadzone Q     : {wyniki['Q_total']:.2f} J")
 print(f"  Praca indykowana W        : {wyniki['praca']:.2f} J")
 print(f"  Ciśnienie max p_max       : {wyniki['p_max']/1e5:.2f} bar")
@@ -254,6 +339,9 @@ print(f"  Temperatura max T_max     : {wyniki['T_max']:.1f} K")
 print(f"  IMEP                      : {wyniki['IMEP']/1e5:.3f} bar")
 print(f"  Sprawność termiczna η_th  : {wyniki['eta_th']*100:.2f} %")
 print("=" * 55)
+print("  Uwaga: T_max w cylindrze > T_ad, ponieważ spalanie w cylindrze")
+print("  zachodzi w mieszance już sprężonej (wysokie T, p), podczas gdy")
+print("  T_ad z Cantera dotyczy spalania mieszanki o warunkach początkowych T1, p1.")
 
 # ─────────────────────────────────────────────────────────────
 # 9. WYKRESY
@@ -265,14 +353,14 @@ T   = wyniki['T']                 # K
 V   = wyniki['V'] * 1e6          # cm³
 x   = wyniki['x']
 
-fig = plt.figure(figsize=(14, 10))
+fig = plt.figure(figsize=(14, 14))
 fig.suptitle(
     f"Symulacja termodynamiczna silnika {TYP_SILNIKA}  |  "
     f"ε = {eps}, λ = {lam}, m = {m}, φ₀ = {phi0}°, Δφ = {delta_phi}°",
     fontsize=13, fontweight='bold'
 )
 
-gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.38, wspace=0.32)
+gs = gridspec.GridSpec(3, 2, figure=fig, hspace=0.45, wspace=0.32)
 
 # ── 9.1  Wykres p-V ─────────────────────────────────────────
 ax1 = fig.add_subplot(gs[0, 0])
@@ -339,6 +427,38 @@ ax4.set_title('Funkcja Wiebescha x(φ)', fontsize=11)
 ax4.legend(fontsize=9)
 ax4.grid(True, alpha=0.3)
 ax4.set_ylim(-0.05, 1.1)
+
+# ── 9.5  Adiabatyczna temperatura spalania T_ad(λ) — Cantera ──
+print("\n  Liczenie T_ad i S_L dla zakresu λ (Cantera)... to może chwilę potrwać.")
+lam_arr = np.arange(0.7, 1.81, 0.1)
+Tad_arr = np.full_like(lam_arr, np.nan)
+SL_arr  = np.full_like(lam_arr, np.nan)
+for i, lam_i in enumerate(lam_arr):
+    try:
+        r = analiza_spalania_cantera(lam=lam_i, T1=T1, p1=p1)
+        Tad_arr[i] = r['T_ad']
+        SL_arr[i]  = r['S_L'] * 100   # cm/s
+    except ct.CanteraError:
+        pass
+
+ax5 = fig.add_subplot(gs[2, 0])
+ax5.plot(lam_arr, Tad_arr, 'o-', color='#b8463f', linewidth=2, markersize=4)
+ax5.axvline(lam, color='gray', linestyle='--', linewidth=1, label=f'λ = {lam} (przyjęte)')
+ax5.set_xlabel('Współczynnik nadmiaru powietrza λ [-]', fontsize=11)
+ax5.set_ylabel('T_ad [K]', fontsize=11)
+ax5.set_title(f'Adiabatyczna temp. spalania T_ad(λ) — {PALIWO_NAZWA}/powietrze', fontsize=10)
+ax5.legend(fontsize=9)
+ax5.grid(True, alpha=0.3)
+
+# ── 9.6  Prędkość spalania laminarnego S_L(λ) — Cantera ──
+ax6 = fig.add_subplot(gs[2, 1])
+ax6.plot(lam_arr, SL_arr, 'o-', color='#2f7a3f', linewidth=2, markersize=4)
+ax6.axvline(lam, color='gray', linestyle='--', linewidth=1, label=f'λ = {lam} (przyjęte)')
+ax6.set_xlabel('Współczynnik nadmiaru powietrza λ [-]', fontsize=11)
+ax6.set_ylabel('S_L [cm/s]', fontsize=11)
+ax6.set_title(f'Prędkość spalania laminarnego S_L(λ) — {PALIWO_NAZWA}/powietrze', fontsize=10)
+ax6.legend(fontsize=9)
+ax6.grid(True, alpha=0.3)
 
 plt.savefig('wyniki_silnik.png', dpi=150, bbox_inches='tight')
 print("\n  Wykres zapisany: wyniki_silnik.png")
