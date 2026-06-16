@@ -275,7 +275,7 @@ def symuluj_obieg(eps, p1, T1, lam, m, phi0, delta_phi, eta_i,
 
     # IMEP — średnie ciśnienie indykowane
     # W = ∮ p dV  (trapezowa reguła)
-    praca = np.trapezoid(p_arr, V_arr)   # [J]
+    praca = np.trapz(p_arr, V_arr)   # [J]
     IMEP  = praca / Vd               # [Pa]
 
     # Sprawność termodynamiczna
@@ -459,8 +459,7 @@ ax6.set_ylabel('S_L [cm/s]', fontsize=11)
 ax6.set_title(f'Prędkość spalania laminarnego S_L(λ) — {PALIWO_NAZWA}/powietrze', fontsize=10)
 ax6.legend(fontsize=9)
 ax6.grid(True, alpha=0.3)
-
-plt.savefig('wyniki_silnik.png', dpi=150, bbox_inches='tight')
+plt.savefig(r'C:\Users\stasi\mkws_wiebe_simulation\kod\wyniki_silnik.png', dpi=150, bbox_inches='tight')
 print("\n  Wykres zapisany: wyniki_silnik.png")
 plt.show()
 
