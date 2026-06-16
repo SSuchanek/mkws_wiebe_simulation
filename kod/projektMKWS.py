@@ -1,22 +1,3 @@
-"""
-Symulacja termodynamiczna silnika tłokowego z modelem spalania Wiebescha
-oraz analizą kinetyki chemicznej spalania w Cantera
-=========================================================================
-Przedmiot: Metody Komputerowe w Spalaniu
-Autor: [Twoje imię i nazwisko]
-
-Model obejmuje:
-  - Analizę kinetyki chemicznej spalania CH4/powietrze (Cantera, mech. GRI-3.0):
-      * adiabatyczna temperatura spalania T_ad (równowaga HP)
-      * równowagowy skład spalin
-      * prędkość spalania laminarnego S_L (model płomienia 1D, FreeFlame)
-  - Geometrię układu korbowo-tłokowego
-  - Sprężanie i rozprężanie (gaz doskonały, γ = const)
-  - Spalanie w cylindrze opisane funkcją Wiebescha
-  - Bilans energii (I zasada termodynamiki)
-  - Wykresy: p-V, p(φ), T(φ), x(φ), T_ad(λ), S_L(λ)
-  - Wskaźniki: p_max, T_max, T_ad, S_L, IMEP, η_th
-"""
 
 import numpy as np
 import matplotlib.pyplot as plt
